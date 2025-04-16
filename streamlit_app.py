@@ -1,4 +1,3 @@
-
 import streamlit as st
 import json
 import hashlib
@@ -31,13 +30,12 @@ if st.button("検索する"):
                 "is_pending": True
             }, f)
 
-    st.experimental_rerun()
-
-# 表示部
+# 結果表示部（常に表示）
 if hotel_name:
     key = hashlib.md5(f"{hotel_name}_{checkin_date}_{checkout_date}_{guest_count}".encode()).hexdigest()
-    try:
-        with open(f"cache/{key}.json", "r") as f:
+    cache_path = f"cache/{key}.json"
+    if os.path.exists(cache_path):
+        with open(cache_path, "r") as f:
             data = json.load(f)
         if data.get("is_pending"):
             st.info("価格情報を取得中です。しばらくしてから再度お試しください。")
@@ -46,5 +44,5 @@ if hotel_name:
             for p in data["prices"]:
                 st.write(f"{p['country']} ¥{p['price']} ({p['currency']})")
                 st.markdown(f"[予約はこちら]({p['url']})", unsafe_allow_html=True)
-    except FileNotFoundError:
-        st.warning("キャッシュファイルが存在しません。")
+    else:
+        st.warning("キャッシュがまだ存在していません。")
