@@ -1,30 +1,86 @@
-
-import streamlit as st
-import requests
+# scrape_prices.py
+import os
 import json
-import hashlib
-from datetime import datetime
+import time
+import requests
+from bs4 import BeautifulSoup
+from urllib.parse import quote
 
-st.title("Agoda 最安国検索")
+# ★ 本番用 APIキー
+SCRAPERAPI_KEY = "5cb364f033d6fa47cbccf3d48074ce0f"
 
-hotel_name = st.text_input("ホテル名")
-checkin_date = st.date_input("チェックイン日")
-checkout_date = st.date_input("チェックアウト日")
-guest_count = st.selectbox("宿泊人数", [1, 2, 3, 4])
+# 比較対象の国（国名 → 国コード）
+TARGET_COUNTRIES = {
+    "Japan": "JP",
+    "Thailand": "TH",
+    "India": "IN",
+    "United States": "US"
+}
 
-if st.button("検索する"):
-    key = hashlib.md5(f"{hotel_name}_{checkin_date}_{checkout_date}_{guest_count}".encode()).hexdigest()
+def get_agoda_url(hotel_name, checkin, checkout, guests):
+    return f"https://www.agoda.com/Search?checkIn={checkin}&checkOut={checkout}&rooms=1&adults={guests}&children=0&text={quote(hotel_name)}"
+
+def fetch_price_from_agoda(url, country_code):
+    api_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&country_code={country_code}&url={quote(url)}"
     try:
-        with open(f"cache/{key}.json", "r") as f:
-            data = json.load(f)
-        if data["is_pending"]:
-            st.info("データ取得中です。しばらくしてから再度ご確認ください。")
+        response = requests.get(api_url, timeout=20)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+        price_tag = soup.find('span', {'data-selenium': 'price'})
+        if price_tag:
+            price_text = price_tag.get_text(strip=True).replace(',', '').replace('¥', '')
+            price_value = int(''.join(filter(str.isdigit, price_text)))
+            return price_value
         else:
-            st.success(f"最安国: {data['prices'][0]['country']} ¥{data['prices'][0]['price']}")
-            for p in data["prices"]:
-                st.write(f"{p['country']} ¥{p['price']} ({p['currency']})")
-                st.markdown(f"[予約はこちら]({p['url']})", unsafe_allow_html=True)
-    except FileNotFoundError:
-        st.warning("初回検索です。価格情報を取得中です。次回アクセスで表示されます。")
-        with open(f"cache/{key}.json", "w") as f:
-            json.dump({"is_pending": True}, f)
+            print(f"[{country_code}] 価格情報が見つかりません")
+            return None
+    except Exception as e:
+        print(f"[{country_code}] 取得失敗: {e}")
+        return None
+
+def main():
+    for fname in os.listdir("cache"):
+        fpath = os.path.join("cache", fname)
+        with open(fpath, "r") as f:
+            data = json.load(f)
+
+        if not data.get("is_pending"):
+            continue
+
+        hotel = data.get("hotel")
+        checkin = data.get("check_in")
+        checkout = data.get("check_out")
+        guests = data.get("guest_count", 1)
+
+        print(f"🔍 {hotel} の価格取得中...")
+
+        result = {
+            "hotel": hotel,
+            "check_in": checkin,
+            "check_out": checkout,
+            "guest_count": guests,
+            "updated_at": time.strftime('%Y-%m-%d %H:%M:%S'),
+            "prices": []
+        }
+
+        for country, code in TARGET_COUNTRIES.items():
+            agoda_url = get_agoda_url(hotel, checkin, checkout, guests)
+            price = fetch_price_from_agoda(agoda_url, code)
+            if price:
+                result["prices"].append({
+                    "country": country,
+                    "price": price,
+                    "currency": "local",
+                    "url": agoda_url + "&cid=XXXX"
+                })
+
+        result["prices"].sort(key=lambda x: x["price"])
+        result["is_pending"] = False
+
+        with open(fpath, "w") as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
+
+        print(f"✅ 完了: {fname}")
+
+if __name__ == "__main__":
+    main()
